@@ -1,4 +1,4 @@
-import allPackagesExtracted from './all-packages.json' assert { type: 'json' };
+import allPackagesExtracted from './artifacts/all-packages.json' assert { type: 'json' };
 import elmJson from './elm.json' assert { type: 'json' }
 
 type Package = {

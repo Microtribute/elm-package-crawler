@@ -1,70 +1,103 @@
 package io.randomthoughts;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.playwright.*;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
+import java.net.URL;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class Main {
-    final static Playwright playwright = Playwright.create();
+    final static String artifactsPath = Paths.get(System.getProperty("user.dir"), "artifacts").toString();
 
-    final static Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setChannel("msedge").setHeadless(true));
+    private static String getArtifactPath(String... nodes) {
+        return Paths.get(artifactsPath, nodes).toString();
+    }
 
-    final static BrowserContext context = browser.newContext(new Browser.NewContextOptions().setViewportSize(1920, 1080));
+    private static String getArtifactUrl(String... nodes) {
+        assert nodes.length > 1;
 
-    final static Page page = context.newPage();
+        return "https://package.elm-lang.org/" + String.join("/", nodes);
+    }
 
-    final static Path artifactsPath = Path.of(System.getProperty("user.dir"), "artifacts");
+    private static void downloadIfMissing(String... nodes) {
+        var target = getArtifactPath(nodes);
+        var title = "📦 " + String.join("/", nodes);
 
-    static class ElmPackage {
-        @JsonProperty
-        private String name;
+        var targetFile = Paths.get(target).toFile();
 
-        @JsonProperty
-        private String link;
-
-        @JsonProperty
-        private String desc;
-
-        @JsonProperty
-        private String version;
-
-        public String getName() {
-            return this.name;
+        if (targetFile.exists()) {
+            System.out.println(title + " ➡ Skipped");
+            return;
         }
 
-        public String getLink() {
-            return this.link;
-        }
+        attempt(title, () -> download(nodes));
+    }
 
-        public String getDesc() {
-            return this.desc;
-        }
+    private static void downloadForcibly(String... nodes) {
+        attempt("💪 " + String.join("/", nodes), () -> download(nodes));
+    }
 
-        public String getVersion() {
-            return this.version;
+    private static void attempt(String title, CheckedRunnable<Exception> runnable) {
+        System.out.print(title + " ➡ ");
+
+        try {
+            runnable.run();
+            System.out.println("OK");
+        } catch (RuntimeException e) {
+            System.out.println("Error: " + e.getCause().getClass().getCanonicalName());
         }
     }
 
+    private static void download(String... nodes) throws IOException {
+        var source = getArtifactUrl(nodes);
+        var target = getArtifactPath(nodes);
+        var targetPath = Paths.get(target);
+
+        // Create directory
+        targetPath.getParent().toFile().mkdirs();
+
+        try (var in = new URL(source).openStream()) {
+            Files.copy(in, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void downloadPackageMetaFiles(String pack) {
+        for (var version : getReleases(pack)) {
+            downloadPackageMetaFiles(pack, version);
+        }
+    }
+
+    private static void downloadPackageMetaFiles(String pack, String version) {
+        downloadIfMissing("packages", pack, version, "elm.json");
+        downloadIfMissing("packages", pack, version, "docs.json");
+        downloadIfMissing("packages", pack, version, "README.md");
+        // downloadIfMissing("packages", pack, version, "endpoint.json");
+    }
+
+    public static List<String> getReleases(String pack) {
+        downloadForcibly("packages", pack, "releases.json");
+
+        var releases = readJsonFile(
+            getArtifactPath("packages", pack, "releases.json"),
+            new TypeReference<HashMap<String, Integer>>() {}
+        );
+
+        assert releases != null;
+
+        return new ArrayList<>(releases.keySet());
+    }
 
     public static void main(String[] args) {
-        System.out.println(artifactsPath);
+        System.out.println("Artifacts Path: " + artifactsPath);
         installPackages();
-        dispose();
-    }
-
-    protected static void dispose() {
-        page.close();
-        browser.close();
-        playwright.close();
     }
 
     private static void runQuiet(String command, File workingDirectory) {
@@ -87,53 +120,78 @@ public class Main {
         var packages = getElmPackages();
 
         for (var pack : packages) {
-            System.out.println("Installing package - " + pack.getName());
-            installPackage(pack);
+            var packageName = pack.get("name");
+            downloadPackageMetaFiles(packageName);
+            // installPackage(packageName);
         }
     }
 
-    private static File getPackageFolder(ElmPackage pack)
-    {
-        var normalizedName = pack.getName().replace('/', '~');
-
-        return Path.of(artifactsPath.toString(), normalizedName).toFile();
+    private static File getPackageInstallationFolder(String pack) {
+        return Paths.get(getArtifactPath("packages", pack, "@install")).toFile();
     }
 
-    protected static void installPackage(ElmPackage pack) {
-        var newProjectPath = getPackageFolder(pack);
+    protected static void installPackage(String pack) {
+        attempt("\uD83D\uDC8A " + pack, () -> {
+            var projectFolder = getPackageInstallationFolder(pack);
 
-        // Create the directory
-        if (!newProjectPath.exists()) {
-            var created = newProjectPath.mkdirs();
+            // Create the directory
+            var $ = projectFolder.mkdirs();
 
-            if (created) {
-                System.out.println("Directory " + newProjectPath + " has been created.");
-            } else {
-                System.out.println("Unable to create a directory at " + newProjectPath + ".");
-            }
-        } else {
-            System.out.println("Directory " + newProjectPath + " already exists.");
-        }
-
-        runQuiet("elm init", newProjectPath);
-        runQuiet("elm install " + pack.getName(), newProjectPath);
+            runQuiet("elm init", projectFolder);
+            runQuiet("elm install " + pack, projectFolder);
+        });
     }
 
-    private static List<ElmPackage> getElmPackages() {
-        var jsonFilePath = Path.of(artifactsPath.toString(), "all-packages.json");
+    private static void deleteFile(File file) {
+        var cmd = "pwsh -Command \"Remove-Item -Force -Recursive -Path \\\"" + file.getAbsolutePath() + "\\\"\"";
 
+        attempt("📃 " + cmd, () -> Runtime.getRuntime().exec(cmd, null).waitFor());
+    }
+
+    private static void cleanupPackage(String pack) {
+        var projectFolder = getPackageInstallationFolder(pack);
+
+        deleteFile(projectFolder);
+    }
+
+    private static List<HashMap<String, String>> getElmPackages() {
+        downloadForcibly("search.json");
+
+        var packages = readJsonFile(
+            getArtifactPath("search.json"),
+            new TypeReference<ArrayList<HashMap<String, String>>>() {}
+        );
+
+        assert packages != null;
+
+        packages.sort(Comparator.comparing(p -> p.get("name")));
+
+        return packages;
+    }
+
+    private static <T> T readJsonFile(String jsonFilePath, TypeReference<T> type) {
         try {
-            var json = new String(Files.readAllBytes(jsonFilePath));
+            var json = new String(Files.readAllBytes(Paths.get(jsonFilePath)));
             var mapper = new ObjectMapper();
 
-            var deserialized = mapper.readValue(json, ElmPackage[].class);
-
-            return Arrays
-                .stream(deserialized)
-                .sorted(Comparator.comparing(ElmPackage::getName))
-                .collect(Collectors.toList());
-        } catch (IOException e) {
-            return new ArrayList<>();
+            return mapper.readValue(json, type);
+        } catch (Exception e) {
+            return null;
         }
     }
+}
+
+@FunctionalInterface
+interface CheckedRunnable<E extends Exception> extends Runnable {
+
+    @Override
+    default void run() throws RuntimeException {
+        try {
+            runExceptionally();
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    void runExceptionally() throws E;
 }
