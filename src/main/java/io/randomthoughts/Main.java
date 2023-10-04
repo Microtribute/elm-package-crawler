@@ -121,8 +121,10 @@ public class Main {
 
         for (var pack : packages) {
             var packageName = pack.get("name");
+
             downloadPackageMetaFiles(packageName);
-            // installPackage(packageName);
+            installPackage(packageName);
+            cleanupPackage(packageName);
         }
     }
 
@@ -131,7 +133,7 @@ public class Main {
     }
 
     protected static void installPackage(String pack) {
-        attempt("\uD83D\uDC8A " + pack, () -> {
+        attempt("✨ " + pack, () -> {
             var projectFolder = getPackageInstallationFolder(pack);
 
             // Create the directory
@@ -143,9 +145,10 @@ public class Main {
     }
 
     private static void deleteFile(File file) {
-        var cmd = "pwsh -Command \"Remove-Item -Force -Recursive -Path \\\"" + file.getAbsolutePath() + "\\\"\"";
+        var removeCommand = "Remove-Item -Force -Recurse -Path \"" + file.getAbsolutePath() + "\"";
+        var cmd = "pwsh -Command \"" + removeCommand.replace("\"", "\"\"") + "\"";
 
-        attempt("📃 " + cmd, () -> Runtime.getRuntime().exec(cmd, null).waitFor());
+        attempt("📃 " + removeCommand, () -> Runtime.getRuntime().exec(cmd, null).waitFor());
     }
 
     private static void cleanupPackage(String pack) {
