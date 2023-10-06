@@ -27,6 +27,11 @@ public class Main {
         return "https://package.elm-lang.org/" + String.join("/", nodes);
     }
 
+    private static String getSourceCodeArchiveFilePath(String pack, String version)
+    {
+        return getArtifactPath("packages", pack, version, pack.replace('/', '~') + "@" + version + ".tar.gz");
+    }
+
     private static void downloadIfMissing(String... nodes) {
         var target = getArtifactPath(nodes);
         var title = "📦 " + String.join("/", nodes);
@@ -59,27 +64,55 @@ public class Main {
     private static void download(String... nodes) throws IOException {
         var source = getArtifactUrl(nodes);
         var target = getArtifactPath(nodes);
-        var targetPath = Paths.get(target);
 
-        // Create directory
-        targetPath.getParent().toFile().mkdirs();
+        Paths.get(target).getParent().toFile().mkdirs();
 
-        try (var in = new URL(source).openStream()) {
-            Files.copy(in, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        downloadRemoteFile(source, target);
+    }
+
+    private static void downloadSourceCode(String pack, String version) throws IOException {
+        downloadRemoteFile(
+            getReleaseUrl(pack, version),
+            getSourceCodeArchiveFilePath(pack, version)
+        );
+    }
+
+    private static void downloadSourceCodeIfMissing(String pack, String version) {
+        var target = getSourceCodeArchiveFilePath(pack, version);
+
+        var title = "🌈 " + target;
+
+        if (Paths.get(target).toFile().exists()) {
+            System.out.println(title + " ➡ Skipped");
+            return;
+        }
+
+        attempt(title, () -> downloadSourceCode(pack, version));
+    }
+
+    private static void downloadRemoteFile(String url, String localFilePath) throws IOException {
+        try (var in = new URL(url).openStream()) {
+            Files.copy(in, Paths.get(localFilePath), StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
-    private static void downloadPackageMetaFiles(String pack) {
+    private static void downloadPackageFiles(String pack) {
         for (var version : getReleases(pack)) {
-            downloadPackageMetaFiles(pack, version);
+            downloadPackageFiles(pack, version);
         }
     }
 
-    private static void downloadPackageMetaFiles(String pack, String version) {
+    private static void downloadPackageFiles(String pack, String version) {
         downloadIfMissing("packages", pack, version, "elm.json");
         downloadIfMissing("packages", pack, version, "docs.json");
         downloadIfMissing("packages", pack, version, "README.md");
-        // downloadIfMissing("packages", pack, version, "endpoint.json");
+        downloadIfMissing("packages", pack, version, "endpoint.json");
+        downloadSourceCodeIfMissing(pack, version);
+    }
+
+    private static String getReleaseUrl(String pack, String version)
+    {
+        return String.join("/", "https://github.com", pack, "archive", "refs", "tags", version + ".tar.gz");
     }
 
     public static List<String> getReleases(String pack) {
@@ -122,7 +155,7 @@ public class Main {
         for (var pack : packages) {
             var packageName = pack.get("name");
 
-            downloadPackageMetaFiles(packageName);
+            downloadPackageFiles(packageName);
             installPackage(packageName);
             cleanupPackage(packageName);
         }
