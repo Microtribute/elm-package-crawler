@@ -27,11 +27,6 @@ public class Main {
         return "https://package.elm-lang.org/" + String.join("/", nodes);
     }
 
-    private static String getSourceCodeArchiveFilePath(String pack, String version)
-    {
-        return getArtifactPath("packages", pack, version, pack.replace('/', '~') + "@" + version + ".tar.gz");
-    }
-
     private static void downloadIfMissing(String... nodes) {
         var target = getArtifactPath(nodes);
         var title = "📦 " + String.join("/", nodes);
@@ -70,15 +65,17 @@ public class Main {
         downloadRemoteFile(source, target);
     }
 
-    private static void downloadSourceCode(String pack, String version) throws IOException {
-        downloadRemoteFile(
-            getReleaseUrl(pack, version),
-            getSourceCodeArchiveFilePath(pack, version)
-        );
+    private static String getPackageSourceRoot(String pack)
+    {
+        return getArtifactPath("packages", pack, pack.replace('/', '~') + ".git");
     }
 
-    private static void downloadSourceCodeIfMissing(String pack, String version) {
-        var target = getSourceCodeArchiveFilePath(pack, version);
+    private static void cloneSourceCode(String pack) {
+        runPowerShellCommand("git clone \"" + getPackageGitCloneUri(pack) + "\" \"" + getPackageSourceRoot(pack) + "\"");
+    }
+
+    private static void cloneSourceCodeIfMissing(String pack) {
+        var target = getPackageSourceRoot(pack);
 
         var title = "🌈 " + target;
 
@@ -87,7 +84,7 @@ public class Main {
             return;
         }
 
-        attempt(title, () -> downloadSourceCode(pack, version));
+        attempt(title, () -> cloneSourceCode(pack));
     }
 
     private static void downloadRemoteFile(String url, String localFilePath) throws IOException {
@@ -100,19 +97,20 @@ public class Main {
         for (var version : getReleases(pack)) {
             downloadPackageFiles(pack, version);
         }
+
+        cloneSourceCodeIfMissing(pack);
     }
 
     private static void downloadPackageFiles(String pack, String version) {
         downloadIfMissing("packages", pack, version, "elm.json");
         downloadIfMissing("packages", pack, version, "docs.json");
         downloadIfMissing("packages", pack, version, "README.md");
-        downloadIfMissing("packages", pack, version, "endpoint.json");
-        downloadSourceCodeIfMissing(pack, version);
+        // downloadIfMissing("packages", pack, version, "endpoint.json");
     }
 
-    private static String getReleaseUrl(String pack, String version)
+    private static String getPackageGitCloneUri(String pack)
     {
-        return String.join("/", "https://github.com", pack, "archive", "refs", "tags", version + ".tar.gz");
+        return "git@github.com:" + pack + ".git";
     }
 
     public static List<String> getReleases(String pack) {
@@ -133,20 +131,8 @@ public class Main {
         installPackages();
     }
 
-    private static void runQuiet(String command, File workingDirectory) {
-        try {
-            var process = Runtime.getRuntime().exec("pwsh -Command \"echo y | " + command + "\"", null, workingDirectory);
-//            var reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-//            var writer = new PrintWriter(new OutputStreamWriter(process.getOutputStream()));
-//
-//            reader.readLine();
-//            writer.println('y');
-//            writer.flush();
-
-            process.waitFor();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    private static void runQuiet(String command, String workingDirectory) {
+        runPowerShellCommand("echo y | " + command, workingDirectory);
     }
 
     protected static void installPackages() {
@@ -172,16 +158,24 @@ public class Main {
             // Create the directory
             var $ = projectFolder.mkdirs();
 
-            runQuiet("elm init", projectFolder);
-            runQuiet("elm install " + pack, projectFolder);
+            runQuiet("elm init", projectFolder.toString());
+            runQuiet("elm install " + pack, projectFolder.toString());
         });
     }
 
     private static void deleteFile(File file) {
-        var removeCommand = "Remove-Item -Force -Recurse -Path \"" + file.getAbsolutePath() + "\"";
-        var cmd = "pwsh -Command \"" + removeCommand.replace("\"", "\"\"") + "\"";
+        runPowerShellCommand("Remove-Item -Force -Recurse -Path \"" + file.getAbsolutePath() + "\"");
+    }
 
-        attempt("📃 " + removeCommand, () -> Runtime.getRuntime().exec(cmd, null).waitFor());
+    private static void runPowerShellCommand(String command) {
+        runPowerShellCommand(command, null);
+    }
+
+    private static void runPowerShellCommand(String command, String workingDirectory) {
+        final var cmd = "pwsh -Command \"" + command.replace("\"", "\"\"") + "\"";
+        final var dir = null == workingDirectory ? getArtifactPath() : workingDirectory;
+
+        attempt("📃 " + command, () -> Runtime.getRuntime().exec(cmd, null, Paths.get(dir).toFile()).waitFor());
     }
 
     private static void cleanupPackage(String pack) {
