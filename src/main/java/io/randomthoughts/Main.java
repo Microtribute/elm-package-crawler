@@ -71,7 +71,15 @@ public class Main {
     }
 
     private static void cloneSourceCode(String pack) {
-        runPowerShellCommand("git clone \"" + getPackageGitCloneUri(pack) + "\" \"" + getPackageSourceRoot(pack) + "\"");
+        var localRepoPath = getPackageSourceRoot(pack);
+
+        if (!Paths.get(localRepoPath).toFile().exists()) {
+            runPowerShellCommand("git clone --quiet \"" + getPackageGitCloneUri(pack) + "\" \"" + localRepoPath + "\"");
+        }
+
+        var gitDir = Paths.get(localRepoPath, ".git");
+
+        runPowerShellCommand("git --quiet --work-tree=\"" + localRepoPath + "\" --git-dir=\"" + gitDir + "\" pull");
     }
 
     private static void cloneSourceCodeIfMissing(String pack) {
@@ -79,10 +87,10 @@ public class Main {
 
         var title = "🌈 " + target;
 
-        if (Paths.get(target).toFile().exists()) {
-            System.out.println(title + " ➡ Skipped");
-            return;
-        }
+//        if (Paths.get(target).toFile().exists()) {
+//            System.out.println(title + " ➡ Skipped");
+//            return;
+//        }
 
         attempt(title, () -> cloneSourceCode(pack));
     }
